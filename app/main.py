@@ -1,9 +1,19 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.models.livro import Livro
-from app.database import get_db
+from app.database import engine, Base, get_db
+from app.models import user, livro
 
 app = FastAPI()
+
+
+@app.get("/")
+def read_root():
+    return {"message": "Bem-vindo à API de Gerenciamento de Livros!"}
+
+
+# Criação das tabelas no banco
+Base.metadata.create_all(bind=engine)
 
 # Criar um novo livro
 @app.post("/livros/", status_code=201)
@@ -50,3 +60,4 @@ def deletar_livro(livro_id: int, db: Session = Depends(get_db)):
     db.delete(livro)
     db.commit()
     return {"message": "Livro deletado com sucesso"}
+
