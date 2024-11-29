@@ -7,26 +7,42 @@ from fastapi.security import OAuth2PasswordBearer
 from app.database import get_db
 from sqlalchemy.orm import Session
 from app.models.user import Usuario
+import os
+import datetime
+from dotenv import load_dotenv
+
+# Carregar variáveis de ambiente
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"  # Garantindo o uso do algoritmo correto
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
 # Contexto para hash de senha
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Função para gerar hash da senha
 def gerar_hash_senha(senha: str) -> str:
     return pwd_context.hash(senha)
 
+# Função para verificar a senha
 def verificar_senha(senha: str, senha_hash: str) -> bool:
     return pwd_context.verify(senha, senha_hash)
 
-def criar_acesso_token(data: dict, expires_delta: Optional[timedelta] = None):
+# Função para criar o token JWT
+def criar_acesso_token(data: dict):
+    # Definir a expiração do token
+    expiracao = datetime.datetime.utcnow() + datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    # Definir os dados a serem codificados no token
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expiracao})
+
+    # Gerar o token JWT
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+# Função para verificar o token
 def verificar_token(token: str) -> Optional[str]:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -34,16 +50,14 @@ def verificar_token(token: str) -> Optional[str]:
     except JWTError:
         return None
 
-
+# Segurança OAuth2
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-SECRET_KEY = "sua_secret_key"
-ALGORITHM = "HS256"
-
+# Função para pegar o usuário atual baseado no token
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Não foi possível validar as credenciais",
+        detail="Credenciais inválidas",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
