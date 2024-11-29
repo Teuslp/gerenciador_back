@@ -1,20 +1,17 @@
 import logging
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import FastAPI, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
 from app.models.livro import Livro
 from app.database import engine, Base, get_db
 from app.models.user import Usuario
+from app.utils.auth import pwd_context, criar_acesso_token, get_current_user  # Importa get_current_user e o OAuth2 centralizado
 from pydantic import BaseModel
-from app.utils.auth import pwd_context, criar_acesso_token, get_current_user
 import os
-import jwt
 from dotenv import load_dotenv
 from app.models.categoria import Categoria
 from app.services.categoria_service import criar_categoria_service, listar_categorias_service
 from typing import List
-from app.models.categoria import CategoriaResponse  # Importar o modelo Pydantic de resposta
-
+from app.models.categoria import CategoriaResponse  # Modelo de resposta Pydantic
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -28,21 +25,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-
-# OAuth2PasswordBearer cria a dependência para pegar o token
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-# Dependência para verificar o JWT
-def verify_token(token: str = Depends(oauth2_scheme)):
-    try:
-        # Decodifica o token JWT
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return username
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
 
 # Criação das tabelas no banco
 Base.metadata.create_all(bind=engine)
@@ -62,18 +44,18 @@ def criar_livro(
     ano: int,
     genero: str,
     db: Session = Depends(get_db),
-    current_user: Usuario = Depends(verify_token),  # Protege o endpoint com a dependência do JWT
+    current_user: Usuario = Depends(get_current_user),  # Utiliza get_current_user
 ):
     novo_livro = Livro(titulo=titulo, autor=autor, ano=ano, genero=genero)
     db.add(novo_livro)
     db.commit()
     db.refresh(novo_livro)
-    logger.info(f"Livro '{titulo}' criado por {current_user}")  # Log de sucesso
+    logger.info(f"Livro '{titulo}' criado por {current_user.nome_usuario}")  # Log com o nome do usuário
     return novo_livro
 
 @app.get("/livros/")
 def listar_livros(db: Session = Depends(get_db)):
-    livros = db.query(Livro).all()  # Já trará created_at e updated_at
+    livros = db.query(Livro).all()
     logger.info(f"Listando {len(livros)} livros.")  # Log de listagem de livros
     return livros
 
@@ -87,7 +69,15 @@ def buscar_livro(livro_id: int, db: Session = Depends(get_db)):
     return livro
 
 @app.put("/livros/{livro_id}")
-def atualizar_livro(livro_id: int, titulo: str, autor: str, ano: int, genero: str, db: Session = Depends(get_db), current_user: Usuario = Depends(verify_token)):
+def atualizar_livro(
+    livro_id: int,
+    titulo: str,
+    autor: str,
+    ano: int,
+    genero: str,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),  # Utiliza get_current_user
+):
     livro = db.query(Livro).filter(Livro.id == livro_id).first()
     if not livro:
         logger.warning(f"Livro com ID {livro_id} não encontrado para atualização.")  # Log de erro
@@ -99,18 +89,22 @@ def atualizar_livro(livro_id: int, titulo: str, autor: str, ano: int, genero: st
     livro.genero = genero
     db.commit()
     db.refresh(livro)
-    logger.info(f"Livro com ID {livro_id} atualizado por {current_user}")  # Log de sucesso
+    logger.info(f"Livro com ID {livro_id} atualizado por {current_user.nome_usuario}")  # Log com o nome do usuário
     return livro
 
 @app.delete("/livros/{livro_id}")
-def deletar_livro(livro_id: int, db: Session = Depends(get_db), current_user: Usuario = Depends(verify_token)):
+def deletar_livro(
+    livro_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),  # Utiliza get_current_user
+):
     livro = db.query(Livro).filter(Livro.id == livro_id).first()
     if not livro:
         logger.warning(f"Tentativa de exclusão de livro com ID {livro_id}, mas livro não encontrado.")  # Log de erro
         raise HTTPException(status_code=404, detail="Livro não encontrado")
     db.delete(livro)
     db.commit()
-    logger.info(f"Livro com ID {livro_id} deletado por {current_user}")  # Log de sucesso
+    logger.info(f"Livro com ID {livro_id} deletado por {current_user.nome_usuario}")  # Log com o nome do usuário
     return {"message": "Livro deletado com sucesso"}
 
 # -------------------------------------------
@@ -118,13 +112,17 @@ def deletar_livro(livro_id: int, db: Session = Depends(get_db), current_user: Us
 # -------------------------------------------
 
 @app.post("/categorias/", response_model=CategoriaResponse)
-def criar_categoria(nome: str, db: Session = Depends(get_db)):
-    categoria = Categoria(nome=nome)  # O 'id' será gerado automaticamente
+def criar_categoria(
+    nome: str,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),  # Utiliza get_current_user
+):
+    categoria = Categoria(nome=nome)
     db.add(categoria)
     db.commit()
-    db.refresh(categoria)  # Atualiza a categoria para incluir o 'id'
-    logger.info(f"Categoria '{nome}' criada.")  # Log de sucesso
-    return CategoriaResponse.from_orm(categoria)  # Retorna o modelo Pydantic CategoriaResponse
+    db.refresh(categoria)
+    logger.info(f"Categoria '{nome}' criada por {current_user.nome_usuario}.")  # Log com o nome do usuário
+    return CategoriaResponse.from_orm(categoria)
 
 @app.get("/categorias/", response_model=List[CategoriaResponse])
 def listar_categorias(db: Session = Depends(get_db)):
@@ -132,9 +130,13 @@ def listar_categorias(db: Session = Depends(get_db)):
     logger.info(f"Listando {len(categorias)} categorias.")  # Log de listagem de categorias
     return [CategoriaResponse.from_orm(categoria) for categoria in categorias]
 
-
 @app.put("/categorias/{categoria_id}", response_model=CategoriaResponse)
-def atualizar_categoria(categoria_id: int, nome: str, db: Session = Depends(get_db)):
+def atualizar_categoria(
+    categoria_id: int,
+    nome: str,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),  # Utiliza get_current_user
+):
     categoria = db.query(Categoria).filter(Categoria.id == categoria_id).first()
     if not categoria:
         logger.warning(f"Categoria com ID {categoria_id} não encontrada para atualização.")  # Log de erro
@@ -143,29 +145,31 @@ def atualizar_categoria(categoria_id: int, nome: str, db: Session = Depends(get_
     categoria.nome = nome
     db.commit()
     db.refresh(categoria)
-    logger.info(f"Categoria com ID {categoria_id} atualizada para '{nome}'.")  # Log de sucesso
-    return CategoriaResponse.from_orm(categoria)  # Retorna o modelo Pydantic CategoriaResponse
-
+    logger.info(f"Categoria com ID {categoria_id} atualizada para '{nome}' por {current_user.nome_usuario}.")  # Log com o nome do usuário
+    return CategoriaResponse.from_orm(categoria)
 
 @app.delete("/categorias/{categoria_id}")
-def deletar_categoria(categoria_id: int, db: Session = Depends(get_db)):
+def deletar_categoria(
+    categoria_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user),  # Utiliza get_current_user
+):
     categoria = db.query(Categoria).filter(Categoria.id == categoria_id).first()
     if not categoria:
         logger.warning(f"Tentativa de exclusão de categoria com ID {categoria_id}, mas categoria não encontrada.")  # Log de erro
         raise HTTPException(status_code=404, detail="Categoria não encontrada")
     db.delete(categoria)
     db.commit()
-    logger.info(f"Categoria com ID {categoria_id} deletada.")  # Log de sucesso
+    logger.info(f"Categoria com ID {categoria_id} deletada por {current_user.nome_usuario}.")  # Log com o nome do usuário
     return {"message": "Categoria deletada com sucesso"}
 
 # -------------------------------------------
 # Endpoints de Autenticação
 # -------------------------------------------
 
-# Modelo para login
 class LoginData(BaseModel):
-    nome_usuario: str
-    senha: str
+    username: str
+    password: str
 
 @app.post("/register")
 def register(nome_usuario: str, senha: str, db: Session = Depends(get_db)):
@@ -178,12 +182,13 @@ def register(nome_usuario: str, senha: str, db: Session = Depends(get_db)):
     return {"message": "Usuário registrado com sucesso", "user": novo_usuario.nome_usuario}
 
 @app.post("/login")
-def login(data: LoginData, db: Session = Depends(get_db)):
-    usuario = db.query(Usuario).filter(Usuario.nome_usuario == data.nome_usuario).first()
-    
-    if not usuario or not pwd_context.verify(data.senha, usuario.senha_hash):  # Corrigido aqui
-        logger.warning(f"Falha na autenticação para o usuário {data.nome_usuario}")  # Log de falha
+def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    usuario = db.query(Usuario).filter(Usuario.nome_usuario == username).first()
+    if not usuario or not pwd_context.verify(password, usuario.senha_hash):
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
+
+    access_token = criar_acesso_token(data={"sub": usuario.nome_usuario})
+    return {"access_token": access_token, "token_type": "bearer"}
 
     access_token = criar_acesso_token(data={"sub": usuario.nome_usuario})
     logger.info(f"Usuário {usuario.nome_usuario} autenticado com sucesso")  # Log de sucesso
