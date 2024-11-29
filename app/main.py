@@ -54,6 +54,42 @@ def criar_livro(
     return novo_livro
 
 @app.get("/livros/")
+def buscar_livro_por_parametros(
+    titulo: str = None,
+    autor: str = None,
+    ano: int = None,
+    genero: str = None,
+    db: Session = Depends(get_db)
+):
+    print(f"Parâmetro recebido para ano: {ano}")
+
+    if not any([titulo, autor, ano, genero]):
+        raise HTTPException(
+            status_code=400,
+            detail="Pelo menos um parâmetro de consulta deve ser fornecido."
+        )
+
+    query = db.query(Livro)
+    
+    if titulo and titulo.strip():
+        query = query.filter(Livro.titulo.ilike(f"%{titulo.strip()}%"))
+    if autor and autor.strip():
+        query = query.filter(Livro.autor.ilike(f"%{autor.strip()}%"))
+    if ano:
+        query = query.filter(Livro.ano == ano)
+    if genero and genero.strip():
+        query = query.filter(Livro.genero.ilike(f"%{genero.strip()}%"))
+    
+    livros = query.all()
+    
+    if not livros:
+        logger.warning("Nenhum livro encontrado com os parâmetros fornecidos.")  # Log de erro
+        raise HTTPException(status_code=404, detail="Nenhum livro encontrado")
+    
+    logger.info(f"{len(livros)} livro(s) encontrado(s) com os parâmetros fornecidos.")  # Log de sucesso
+    return livros
+
+@app.get("/livros/")
 def listar_livros(db: Session = Depends(get_db)):
     livros = db.query(Livro).all()
     logger.info(f"Listando {len(livros)} livros.")  # Log de listagem de livros
@@ -67,6 +103,8 @@ def buscar_livro(livro_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Livro não encontrado")
     logger.info(f"Livro com ID {livro_id} encontrado: {livro.titulo}")  # Log de sucesso
     return livro
+
+
 
 @app.put("/livros/{livro_id}")
 def atualizar_livro(
@@ -186,9 +224,6 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
     usuario = db.query(Usuario).filter(Usuario.nome_usuario == username).first()
     if not usuario or not pwd_context.verify(password, usuario.senha_hash):
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-
-    access_token = criar_acesso_token(data={"sub": usuario.nome_usuario})
-    return {"access_token": access_token, "token_type": "bearer"}
 
     access_token = criar_acesso_token(data={"sub": usuario.nome_usuario})
     logger.info(f"Usuário {usuario.nome_usuario} autenticado com sucesso")  # Log de sucesso
